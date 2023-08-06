@@ -1,12 +1,21 @@
-mod bears;
+use std::process::ExitCode;
 
-fn main() {
+mod bears;
+mod utils;
+
+fn main() -> ExitCode {
     let num_players = 5;
-    let mut game_table = bears::system::GameTable::from(
+    let mut game_table = match bears::system::GameTable::from(
         num_players,
         bears::system::InitialPlayerSelectionStrategy::Random,
         bears::system::QuestTileSelectionStrategy::Random,
-    );
+    ) {
+        Some(game_table) => game_table,
+        None => {
+            println!("Invalid number of players: {}", num_players);
+            return ExitCode::FAILURE;
+        }
+    };
     loop {
         match game_table.state {
             bears::system::GameState::Done { winner_indices } => {
@@ -33,4 +42,5 @@ fn main() {
     for event in game_table.events.iter() {
         println!("{:?}", event);
     }
+    ExitCode::SUCCESS
 }

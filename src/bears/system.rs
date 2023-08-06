@@ -1,11 +1,13 @@
 use super::models::*;
+use crate::utils::Deck;
 use rand::{seq::SliceRandom, Rng};
 
 #[derive(Debug)]
 pub struct Player {
     pub index: usize,
+    pub bear: BearCard,
     pub hand: Vec<ResourceCard>,
-    pub quest_tiles: Vec<QuestCard>,
+    pub quest_tiles: Vec<QuestTile>,
     pub completed_quests: Vec<QuestCard>,
 }
 
@@ -16,6 +18,7 @@ pub enum GameState {
     Done { winner_indices: Vec<usize> },
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum InitialPlayerSelectionStrategy {
     Random,
@@ -23,6 +26,7 @@ pub enum InitialPlayerSelectionStrategy {
     Last,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum QuestTileSelectionStrategy {
     Random,
@@ -32,19 +36,19 @@ pub enum QuestTileSelectionStrategy {
 
 #[derive(Debug)]
 pub enum LoggedEvents {
-    BuiltQuestDeck { quests: Vec<QuestCard> },
-    BuiltResourceDeck { resources: Vec<ResourceCard> },
+    BuiltQuestDeck { quests: Deck<QuestCard> },
+    BuiltResourceDeck { resources: Deck<ResourceCard> },
     SelectedInitialPlayer { player_index: usize },
 }
 
 #[derive(Debug)]
 pub struct GameTable {
     pub players: Vec<Player>,
-    pub quest_deck: Vec<QuestCard>,
-    pub quest_tiles: Vec<QuestCard>,
-    pub resource_deck: Vec<ResourceCard>,
+    pub quests: Deck<QuestCard>,
+    pub quest_tiles: Deck<QuestTile>,
+    pub resources: Deck<ResourceCard>,
     pub open_quests: Vec<QuestCard>,
-    pub discard_pile: Vec<ResourceCard>,
+    pub discard_pile: Deck<ResourceCard>,
     pub state: GameState,
     pub initial_player_selection_strategy: InitialPlayerSelectionStrategy,
     pub quest_tile_selection_strategy: QuestTileSelectionStrategy,
@@ -56,19 +60,22 @@ impl GameTable {
         num_players: usize,
         initial_player_selection_strategy: InitialPlayerSelectionStrategy,
         quest_tile_selection_strategy: QuestTileSelectionStrategy,
-    ) -> Self {
-        Self {
+    ) -> Option<Self> {
+        if num_players < 2 || num_players > 6 {
+            return None;
+        }
+        Some(Self {
             players: Self::create_players(num_players),
-            quest_deck: Vec::new(),
-            quest_tiles: Vec::new(),
-            resource_deck: Vec::new(),
+            quests: Deck::new(),
+            quest_tiles: Deck::new(),
+            resources: Deck::new(),
             open_quests: Vec::new(),
-            discard_pile: Vec::new(),
+            discard_pile: Deck::new(),
             state: GameState::Uninitialized,
             initial_player_selection_strategy,
             quest_tile_selection_strategy,
             events: Vec::new(),
-        }
+        })
     }
 
     pub fn play_one_step(&mut self) {
@@ -94,35 +101,44 @@ impl GameTable {
     }
 
     fn create_players(num_players: usize) -> Vec<Player> {
-        let mut players = Vec::new();
-        for i in 0..num_players {
-            players.push(Player::new(i));
-        }
-        players
+        let mut bears = vec![
+            BearCard::Polar,
+            BearCard::Panda,
+            BearCard::Sloth,
+            BearCard::Spectacled,
+            BearCard::Grizzly,
+            BearCard::Sun,
+        ];
+        bears.shuffle(&mut rand::thread_rng());
+        bears
+            .iter()
+            .enumerate()
+            .take(num_players)
+            .map(|(i, b)| Player::new(i, *b))
+            .collect()
     }
 
     fn build_quest_deck(&mut self) {
-        let mut quests = build_all_quests();
-        quests.shuffle(&mut rand::thread_rng());
+        let (quests, quest_tiles) = build_all_quests();
+        self.quests = Deck::from(quests);
+        self.quests.shuffle();
         let num_quests = match self.players.len() {
             1..=3 => 12,
             4..=5 => 15,
-            _ => quests.len(),
+            _ => self.quests.len(),
         };
-        quests.truncate(num_quests);
-        self.quest_deck = quests;
-        self.quest_tiles = self.quest_deck.clone();
+        self.quests.truncate(num_quests);
+        self.quest_tiles = Deck::from(quest_tiles);
         self.add_event(LoggedEvents::BuiltQuestDeck {
-            quests: self.quest_deck.clone(),
+            quests: self.quests.clone(),
         });
     }
 
     fn build_resource_deck(&mut self) {
-        let mut resources = build_all_resources();
-        resources.shuffle(&mut rand::thread_rng());
-        self.resource_deck = resources;
+        self.resources = Deck::from(build_all_resources());
+        self.resources.shuffle();
         self.add_event(LoggedEvents::BuiltResourceDeck {
-            resources: self.resource_deck.clone(),
+            resources: self.resources.clone(),
         });
     }
 
@@ -130,7 +146,7 @@ impl GameTable {
         let initial_resource_count = 5;
         for _ in 0..initial_resource_count {
             for player in &mut self.players {
-                match self.resource_deck.pop() {
+                match self.resources.draw() {
                     Some(resource) => player.add_to_hand(resource),
                     None => {
                         panic!("Ran out of resources while distributing. This should never happen.")
@@ -141,64 +157,30 @@ impl GameTable {
     }
 
     fn distribute_quest_tiles(&mut self) {
-        let quest_tile_count = 3;
+        let tiles_per_player = 3;
         match self.quest_tile_selection_strategy {
             QuestTileSelectionStrategy::Random => {
-                for _ in 0..quest_tile_count {
+                for _ in 0..tiles_per_player {
                     for player in &mut self.players {
                         let quest_tile_index =
                             rand::thread_rng().gen_range(0..self.quest_tiles.len());
-                        let quest_tile = self.quest_tiles.remove(quest_tile_index);
-                        player.add_quest_tile(quest_tile);
+                        let quest_tile = self.quest_tiles.draw_from(quest_tile_index);
+                        match quest_tile {
+                            Some(quest_tile) => player.add_quest_tile(quest_tile),
+                            None => {
+                                panic!("Ran out of quest tiles while distributing. This should never happen.")
+                            }
+                        }
                     }
                 }
             }
             QuestTileSelectionStrategy::Greedy => {
-                panic!("Greedy quest tile selection not implemented yet")
+                todo!("Greedy quest tile selection not implemented yet")
             }
 
-            QuestTileSelectionStrategy::Target { target } => {
-                panic!("Target quest tile selection not implemented yet")
-            } /*
-                  QuestTileSelectionStrategy::Target { target } => {
-                      for _ in 0..quest_tile_count {
-                          for player in &mut self.players {
-                              let current_tile_total = player.quest_tiles.iter().fold(0u32, |acc, q| acc + q.reward);
-                              if current_tile_total < target {
-                                  let mut best_quest_index = 0;
-                                  let mut best_quest_reward = 0;
-                                  for (i, quest) in self.quest_tiles.iter().enumerate() {
-                                      if quest.reward > best_quest_reward {
-                                          best_quest_index = i;
-                                          best_quest_reward = quest.reward;
-                                      }
-                                  }
-                                  match self.quest_deck.remove(best_quest_index) {
-                                      Some(quest) => player.add_quest_tile(quest),
-                                      None => {
-                                          panic!("Ran out of quest tiles while distributing. This should never happen.")
-                                      }
-                                  }
-                              }
-                          }
-                      }
-                  }
-              }
-              let num_quest_tiles = match self.players.len() {
-                  1..=3 => 4,
-                  4..=5 => 5,
-                  _ => 6,
-              };
-              for _ in 0..num_quest_tiles {
-                  match self.quest_deck.pop() {
-                      Some(quest) => self.open_quests.push(quest),
-                      None => {
-                          panic!("Ran out of quests while distributing. This should never happen.")
-                      }
-                  }
-              }
-              self.open_quests.sort_by(|a, b| a.reward.cmp(&b.reward)
-              */
+            QuestTileSelectionStrategy::Target { target: _ } => {
+                todo!("Target quest tile selection not implemented yet")
+            }
         }
     }
 
@@ -218,9 +200,10 @@ impl GameTable {
 }
 
 impl Player {
-    pub fn new(index: usize) -> Self {
+    pub fn new(index: usize, bear: BearCard) -> Self {
         Self {
             index,
+            bear,
             hand: Vec::new(),
             quest_tiles: Vec::new(),
             completed_quests: Vec::new(),
@@ -231,7 +214,7 @@ impl Player {
         self.hand.push(resource);
     }
 
-    pub fn add_quest_tile(&mut self, quest: QuestCard) {
-        self.quest_tiles.push(quest);
+    pub fn add_quest_tile(&mut self, tile: QuestTile) {
+        self.quest_tiles.push(tile);
     }
 }

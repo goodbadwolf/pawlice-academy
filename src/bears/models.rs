@@ -43,12 +43,12 @@ pub enum ResourceCard {
 
 #[derive(Debug, Clone, Copy, EnumDisplay)]
 pub enum BearCard {
-    PolarBear,
+    Polar,
     Panda,
-    SlothBear,
-    SpectacledBear,
-    GrizzlyBear,
-    SunBear,
+    Sloth,
+    Spectacled,
+    Grizzly,
+    Sun,
 }
 
 #[derive(Debug, Clone)]
@@ -58,12 +58,13 @@ pub struct QuestCard {
     pub reward: usize,
 }
 
-pub struct QuestTile<'a> {
-    pub quest: &'a QuestCard,
+#[derive(Debug, Clone)]
+pub struct QuestTile {
+    pub quest: QuestCard,
 }
 
-pub fn build_all_quests() -> Vec<QuestCard> {
-    vec![
+pub fn build_all_quests() -> (Vec<QuestCard>, Vec<QuestTile>) {
+    let quests = vec![
         QuestCard {
             name: "Tuna Sandwich".to_string(),
             cost: vec![
@@ -278,7 +279,15 @@ pub fn build_all_quests() -> Vec<QuestCard> {
             ],
             reward: 2,
         },
-    ]
+    ];
+
+    let quest_tiles = quests
+        .iter()
+        .cloned()
+        .map(|q| QuestTile { quest: q })
+        .collect();
+
+    (quests, quest_tiles)
 }
 
 pub fn build_all_resources() -> Vec<ResourceCard> {
